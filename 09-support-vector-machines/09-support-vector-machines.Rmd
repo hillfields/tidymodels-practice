@@ -1,0 +1,204 @@
+---
+title: "9 - Support Vector Machines"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+```
+
+## 9.1 - Support Vector Classifier
+
+```{r, message=FALSE}
+# load libraries
+library(tidymodels)
+library(ISLR)
+
+# simulate training data
+set.seed(1)
+sim_data <- tibble(x1 = rnorm(40),
+                   x2 = rnorm(40),
+                   y = factor(rep(c(-1, 1), 20))) %>%
+  mutate(x1 = ifelse(y == 1, x1 + 1.5, x1),
+         x2 = ifelse(y == 1, x2 + 1.5, x2))
+
+# plot data
+ggplot(sim_data, aes(x1, x2, color = y)) +
+  geom_point()
+```
+
+```{r}
+# specify model
+svm_linear_spec <- svm_poly(degree = 1) %>%
+  set_mode("classification") %>%
+  set_engine("kernlab", scaled = FALSE)
+
+# fit model
+svm_linear_fit <- svm_linear_spec %>%
+  set_args(cost = 10) %>%
+  fit(y ~ ., data = sim_data)
+
+svm_linear_fit
+```
+
+```{r, message=FALSE}
+# visualize model
+library(kernlab)
+svm_linear_fit %>%
+  extract_fit_engine() %>%
+  plot()
+```
+
+Smaller cost &rarr; wider margin &rarr; more support vectors
+
+```{r}
+# fit model w/ smaller cost
+svm_linear_fit <- svm_linear_spec %>%
+  set_args(cost = 0.1) %>%
+  fit(y ~ ., data = sim_data)
+
+svm_linear_fit
+```
+
+```{r}
+# create workflow object
+svm_linear_wf <- workflow() %>%
+  add_model(svm_linear_spec %>% set_args(cost = tune())) %>%
+  add_formula(y ~ .)
+
+# perform k-fold CV
+set.seed(1234)
+sim_data_fold <- vfold_cv(sim_data, strata = y)
+
+# parameters to try
+param_grid <- grid_regular(cost(), levels = 10)
+
+# fit models
+tune_res <- tune_grid(object = svm_linear_wf,
+                      resamples = sim_data_fold,
+                      grid = param_grid)
+
+# plot metrics
+autoplot(tune_res)
+```
+
+```{r}
+# choose the best parameter
+best_cost <- select_best(tune_res, metric = "accuracy")
+svm_linear_final <- finalize_workflow(svm_linear_wf, best_cost)
+
+# fit model
+svm_linear_fit <- svm_linear_final %>% fit(sim_data)
+svm_linear_fit
+```
+
+```{r}
+# simulate test data
+set.seed(2)
+sim_data_test <- tibble(x1 = rnorm(20),
+                        x2 = rnorm(20),
+                        y = factor(rep(c(-1, 1), 10))) %>%
+  mutate(x1 = ifelse(y == 1, x1 + 1.5, x1),
+         x2 = ifelse(y == 1, x2 + 1.5, x2))
+
+# create confusion matrix
+augment(svm_linear_fit, new_data = sim_data_test) %>%
+  conf_mat(truth = y, estimate = .pred_class)
+```
+
+## 9.2 - Support Vector Classifier
+
+```{r}
+# simulate training data w/ non-linear class boundary
+set.seed(1)
+sim_data2 <- tibble(x1 = rnorm(200) + rep(c(2, -2, 0), c(100, 50, 50)),
+                    x2 = rnorm(200) + rep(c(2, -2, 0), c(100, 50, 50)),
+                    y = factor(rep(c(1, 2), c(150, 50))))
+
+# plot data
+sim_data2 %>%
+  ggplot(aes(x1, x2, color = y)) +
+  geom_point()
+```
+
+```{r}
+# specify model (SVM w/ radial basis function)
+svm_rbf_spec <- svm_rbf() %>%
+  set_mode("classification") %>%
+  set_engine("kernlab")
+
+# fit model
+svm_rbf_fit <- svm_rbf_spec %>%
+  fit(y ~ ., data = sim_data2)
+
+# visualize model
+svm_rbf_fit %>%
+  extract_fit_engine() %>%
+  plot()
+```
+
+```{r}
+# simulate test data
+set.seed(2)
+sim_data2_test <- tibble(x1 = rnorm(200) + rep(c(2, -2, 0), c(100, 50, 50)),
+                         x2 = rnorm(200) + rep(c(2, -2, 0), c(100, 50, 50)),
+                         y = factor(rep(c(1, 2), c(150, 50))))
+
+# create confusion matrix
+augment(svm_rbf_fit, new_data = sim_data2_test) %>%
+  conf_mat(truth = y, estimate = .pred_class)
+```
+
+## 9.3 - ROC Curves
+
+```{r}
+# get values for the ROC curve
+augment(svm_rbf_fit, new_data = sim_data2_test) %>%
+  roc_curve(truth = y, estimate = .pred_1) # .pred_1 contains predicted class probabilities
+
+# plot ROC curve
+augment(svm_rbf_fit, new_data = sim_data2_test) %>%
+  roc_curve(truth = y, estimate = .pred_1) %>%
+  autoplot()
+
+# calculate area under the curve
+augment(svm_rbf_fit, new_data = sim_data2_test) %>%
+  roc_auc(truth = y, estimate = .pred_1)
+```
+
+## 9.4 - Application to Gene Expression Data
+
+```{r, warning=FALSE}
+# training data
+Khan_train <- bind_cols(
+  y = factor(Khan$ytrain),
+  as_tibble(Khan$xtrain)
+)
+
+# test data
+Khan_test <- bind_cols(
+  y = factor(Khan$ytest),
+  as_tibble(Khan$xtest)
+)
+
+# output data dimensions
+dim(Khan_train)
+```
+
+```{r}
+# fit model
+khan_fit <- svm_linear_spec %>%
+  set_args(cost = 10) %>%
+  fit(y ~ ., data = Khan_train)
+
+# create confusion matrix
+augment(khan_fit, new_data = Khan_test) %>%
+  conf_mat(truth = y, estimate = .pred_class)
+```
+
+## Credit
+
+[ISLR tidymodel labs - Chapter 9](https://emilhvitfeldt.github.io/ISLR-tidymodels-labs/09-support-vector-machines.html)

@@ -1,0 +1,459 @@
+---
+title: "4 - Classification"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+```
+
+## 4.1 - The Stock Market Data
+
+```{r, message=FALSE}
+# load libraries
+library(tidymodels)
+library(ISLR) # for the Smarket data set
+library(ISLR2) # for the Bikeshare data set
+library(discrim)
+library(poissonreg)
+```
+
+```{r}
+# plot correlation matrix
+library(corrr)
+cor_Smarket <- Smarket %>%
+  select(-Direction) %>%
+  correlate()
+
+rplot(cor_Smarket, colors = c("indianred2", "black", "skyblue1"))
+```
+
+```{r}
+# plot heatmap styled correlation chart
+library(paletteer)
+cor_Smarket %>%
+  stretch() %>%
+  ggplot(aes(x, y, fill = r)) +
+  geom_tile() +
+  geom_text(aes(label = as.character(fashion(r)))) +
+  scale_fill_paletteer_c("scico::roma", limits = c(-1, 1), direction = -1)
+```
+
+```{r}
+# plot Year against Volume
+ggplot(Smarket, aes(Year, Volume)) +
+  geom_jitter(height = 0)
+```
+
+## 4.2 - Logistic Regression
+
+```{r}
+# specify model
+lr_spec <- logistic_reg() %>%
+  set_engine("glm") %>%
+  set_mode("classification")
+
+# fit model
+lr_fit <- lr_spec %>%
+  fit(Direction ~ Lag1 + Lag2 + Lag3 + Lag4 + Lag5 + Volume,
+      data = Smarket)
+
+lr_fit
+```
+
+```{r}
+# show summary
+lr_fit %>%
+  pluck("fit") %>%
+  summary()
+```
+
+```{r}
+# return parameter estimates
+tidy(lr_fit)
+```
+
+```{r}
+# make predictions
+predict(lr_fit, new_data = Smarket)
+```
+
+```{r}
+# get probability predictions
+predict(lr_fit, new_data = Smarket, type = "prob")
+```
+
+```{r}
+# create confusion matrix
+augment(lr_fit, new_data = Smarket) %>%
+  conf_mat(truth = Direction, estimate = .pred_class)
+```
+
+```{r}
+# visualize confusion matrix
+augment(lr_fit, new_data = Smarket) %>%
+  conf_mat(truth = Direction, estimate = .pred_class) %>%
+  autoplot(type = "heatmap")
+```
+
+```{r}
+# accuracy of the model
+augment(lr_fit, new_data = Smarket) %>%
+  accuracy(truth = Direction, estimate = .pred_class)
+```
+
+```{r}
+# training data
+Smarket_train <- Smarket %>%
+  filter(Year != 2005)
+
+# test data
+Smarket_test <- Smarket %>%
+  filter(Year == 2005)
+
+# fit model
+lr_fit2 <- lr_spec %>%
+  fit(Direction ~ Lag1 + Lag2 + Lag3 + Lag4 + Lag5 + Volume,
+      data = Smarket_train)
+
+# create confusion matrix
+augment(lr_fit2, new_data = Smarket_test) %>%
+  conf_mat(truth = Direction, estimate = .pred_class)
+```
+
+```{r}
+# accuracy of the model
+augment(lr_fit2, new_data = Smarket_test) %>%
+  accuracy(truth = Direction, estimate = .pred_class)
+```
+
+```{r}
+# fit model
+lr_fit3 <- lr_spec %>%
+  fit(Direction ~ Lag1 + Lag2,
+      data = Smarket_train)
+
+# create confusion matrix
+augment(lr_fit3, new_data = Smarket_test) %>%
+  conf_mat(truth = Direction, estimate = .pred_class)
+```
+
+```{r}
+# accuracy of the model
+augment(lr_fit3, new_data = Smarket_test) %>%
+  accuracy(truth = Direction, estimate = .pred_class)
+```
+
+```{r}
+# create new data
+Smarket_new <- tibble(
+  Lag1 = c(1.2, 1.5),
+  Lag2 = c(1.1, -0.8)
+)
+
+# make predictions on new data
+predict(lr_fit3, new_data = Smarket_new, type = "prob")
+```
+
+## 4.3 - Linear Discriminant Analysis
+
+```{r}
+# specify model
+lda_spec <- discrim_linear() %>%
+  set_mode("classification") %>%
+  set_engine("MASS")
+
+# fit model
+lda_fit <- lda_spec %>%
+  fit(Direction ~ Lag1 + Lag2,
+      data = Smarket_train)
+
+lda_fit
+```
+
+```{r}
+# make predictions
+predict(lda_fit, new_data = Smarket_test)
+```
+
+```{r}
+# get probability predictions
+predict(lda_fit, new_data = Smarket_test, type = "prob")
+```
+
+```{r}
+# create confusion matrix
+augment(lda_fit, new_data = Smarket_test) %>%
+  conf_mat(truth = Direction, estimate = .pred_class)
+```
+
+```{r}
+# accuracy of the model
+augment(lda_fit, new_data = Smarket_test) %>%
+  accuracy(truth = Direction, estimate = .pred_class)
+```
+
+## 4.4 - Quadratic Discriminant Analysis
+
+```{r}
+# specify model
+qda_spec <- discrim_quad() %>%
+  set_mode("classification") %>%
+  set_engine("MASS")
+
+# fit model
+qda_fit <- qda_spec %>%
+  fit(Direction ~ Lag1 + Lag2,
+      data = Smarket_train)
+
+qda_fit
+```
+
+```{r}
+# create confusion matrix
+augment(qda_fit, new_data = Smarket_test) %>%
+  conf_mat(truth = Direction, estimate = .pred_class)
+```
+
+```{r}
+# accuracy of the model
+augment(qda_fit, new_data = Smarket_test) %>%
+  accuracy(truth = Direction, estimate = .pred_class)
+```
+
+## 4.5 - Naive Bayes
+
+```{r}
+# fit model
+nb_spec <- naive_Bayes() %>%
+  set_mode("classification") %>%
+  set_engine("klaR") %>%
+  set_args(usekernel = FALSE) # assume Lag1 and Lag2 are drawn from Gaussian distributions
+
+# specify model
+nb_fit <- nb_spec %>%
+  fit(Direction ~ Lag1 + Lag2,
+      data = Smarket_train)
+```
+
+```{r}
+# create confusion matrix
+augment(nb_fit, new_data = Smarket_test) %>% 
+  conf_mat(truth = Direction, estimate = .pred_class)
+```
+
+```{r}
+# accuracy of the model
+augment(nb_fit, new_data = Smarket_test) %>% 
+  accuracy(truth = Direction, estimate = .pred_class)
+```
+
+```{r}
+# plot Lag2 against Lag1
+# Naive Bayes assumes predictors are independently distributed
+ggplot(Smarket, aes(Lag1, Lag2)) +
+  geom_point(alpha = 0.1, size = 2) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "No apparent correlation between Lag1 and Lag2")
+```
+
+## 4.6 - K-Nearest Neighbors
+
+```{r}
+# specify model
+knn_spec <- nearest_neighbor(neighbors = 3) %>%
+  set_mode("classification") %>%
+  set_engine("kknn")
+
+# fit model
+knn_fit <- knn_spec %>%
+  fit(Direction ~ Lag1 + Lag2,
+      data = Smarket_train)
+
+knn_fit
+```
+
+```{r}
+# create confusion matrix
+augment(knn_fit, new_data = Smarket_test) %>%
+  conf_mat(truth = Direction, estimate = .pred_class)
+```
+
+```{r}
+# accuracy of the model
+augment(knn_fit, new_data = Smarket_test) %>%
+  accuracy(truth = Direction, estimate = .pred_class)
+```
+
+Using another data set
+
+```{r}
+# partition training and test sets (not the proper way)
+Caravan_test <- Caravan[seq_len(1000), ]
+Caravan_train <- Caravan[-seq_len(1000), ]
+
+# specify recipe
+# variables are centered and scaled to ensure variables have uniform influence
+rec_spec <- recipe(Purchase ~ ., data = Caravan_train) %>%
+  step_normalize(all_numeric_predictors())
+
+# create workflow object
+Caravan_wf <- workflow() %>%
+  add_recipe(rec_spec)
+
+# specify model
+knn_spec <- nearest_neighbor() %>%
+  set_mode("classification") %>%
+  set_engine("kknn")
+
+# create workflow objects for K = 1, 3, 5
+knn1_wf <- Caravan_wf %>%
+  add_model(knn_spec %>% set_args(neighbors = 1))
+
+knn3_wf <- Caravan_wf %>%
+  add_model(knn_spec %>% set_args(neighbors = 3))
+
+knn5_wf <- Caravan_wf %>%
+  add_model(knn_spec %>% set_args(neighbors = 5))
+
+# fit models
+knn1_fit <- knn1_wf %>% fit(Caravan_train)
+knn3_fit <- knn3_wf %>% fit(Caravan_train)
+knn5_fit <- knn5_wf %>% fit(Caravan_train)
+```
+
+```{r}
+# create confusion matrix (K = 1)
+augment(knn1_fit, new_data = Caravan_test) %>%
+  conf_mat(truth = Purchase, estimate = .pred_class)
+```
+
+```{r}
+# create confusion matrix (K = 3)
+augment(knn3_fit, new_data = Caravan_test) %>%
+  conf_mat(truth = Purchase, estimate = .pred_class)
+```
+
+```{r}
+# create confusion matrix (K = 5)
+augment(knn5_fit, new_data = Caravan_test) %>%
+  conf_mat(truth = Purchase, estimate = .pred_class)
+```
+
+## 4.7 - Poisson Regression
+
+```{r}
+# specify model
+pois_spec <- poisson_reg() %>%
+  set_mode("regression") %>%
+  set_engine("glm")
+
+# specify recipe
+pois_rec_spec <- recipe(bikers ~ mnth + hr + workingday + temp + weathersit,
+                        data = Bikeshare) %>%
+  step_dummy(all_nominal_predictors())
+
+# create workflow object (combine recipe + model)
+pois_wf <- workflow() %>%
+  add_recipe(pois_rec_spec) %>%
+  add_model(pois_spec)
+
+# fit model
+pois_fit <- pois_wf %>% fit(Bikeshare)
+
+# plot predicted against actual values
+augment(pois_fit, new_data = Bikeshare, type.predict = "response") %>%
+  ggplot(aes(bikers, .pred)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(slope = 1, size = 1, color = "grey40") +
+  labs(title = "Predicting the number of bikers per hour using Poisson Regression",
+       x = "Actual", y = "Predicted")
+```
+
+```{r}
+# get coefficient estimates for the months
+pois_fit_coef_mnths <- tidy(pois_fit) %>% 
+  filter(grepl("^mnth", term)) %>% 
+  mutate(
+    term = stringr::str_replace(term, "mnth_", ""),
+    term = forcats::fct_inorder(term)
+  ) 
+
+# plot coefficient estimates
+# number of bike rentals is higher in summer
+pois_fit_coef_mnths %>% 
+  ggplot(aes(term, estimate)) +
+  geom_line(group = 1) +
+  geom_point(shape = 21, size = 3, stroke = 1.5, 
+             fill = "black", color = "white") +
+  labs(title = "Coefficient value from Poission Regression",
+       x = "Month", y = "Coefficient")
+```
+
+```{r}
+# get coefficient estimates for the hours
+pois_fit_coef_hr <- 
+  tidy(pois_fit) %>% 
+  filter(grepl("^hr", term)) %>% 
+  mutate(
+    term = stringr::str_replace(term, "hr_X", ""),
+    term = forcats::fct_inorder(term)
+  )
+
+# plot coefficient estimates
+# peaks at 8 AM and 5 PM (i.e. during normal office start and end times)
+pois_fit_coef_hr %>% 
+  ggplot(aes(term, estimate)) +
+  geom_line(group = 1) +
+  geom_point(shape = 21, size = 3, stroke = 1.5, 
+             fill = "black", color = "white") +
+  labs(title = "Coefficient value from Poission Regression",
+       x = "hours", y = "Coefficient")
+```
+
+## 4.8 - Extra: Comparing Multiple Models
+
+```{r}
+# list of fitted models
+models <- list("logistic regression" = lr_fit3,
+               "LDA" = lda_fit,
+               "QDA" = qda_fit,
+               "KNN" = knn_fit)
+
+# apply augment to each model using the test data set
+preds <- imap_dfr(models,
+                  augment,
+                  new_data = Smarket_test,
+                  .id = "model")
+
+# output results
+preds %>%
+  select(model, Direction, .pred_class, .pred_Down, .pred_Up)
+```
+
+```{r}
+# add more metrics for classification
+multi_metric <- metric_set(accuracy,
+                           sensitivity,
+                           specificity)
+
+# calculate metrics for each model
+preds %>%
+  group_by(model) %>%
+  multi_metric(truth = Direction, estimate = .pred_class)
+```
+
+```{r}
+# plot ROC curves for each model
+preds %>%
+  group_by(model) %>%
+  roc_curve(Direction, .pred_Down) %>%
+  autoplot()
+```
+
+## Credit
+
+[ISLR tidymodel labs - Chapter 4](https://emilhvitfeldt.github.io/ISLR-tidymodels-labs/04-classification.html)

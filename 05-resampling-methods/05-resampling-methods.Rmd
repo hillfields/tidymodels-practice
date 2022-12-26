@@ -1,0 +1,202 @@
+---
+title: "5- Resampling Methods"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+```
+
+## 5.1 - The Validation Set Approach
+
+```{r, message=FALSE}
+# load libraries
+library(tidymodels)
+library(ISLR)
+
+# load data sets
+Auto <- tibble(Auto)
+Portfolio <- tibble(Portfolio)
+```
+
+```{r}
+# partition training and test sets
+set.seed(1)
+Auto_split <- initial_split(Auto,
+                            strata = mpg, # both splits have about the same distribution of the strata
+                            prop = 0.5)   # proportion of data used for training
+
+Auto_train <- training(Auto_split)
+Auto_test <- testing(Auto_split)
+```
+
+```{r}
+# specify model
+lm_spec <- linear_reg() %>%
+  set_mode("regression") %>%
+  set_engine("lm")
+
+# fit model
+lm_fit <- lm_spec %>%
+  fit(mpg ~ horsepower, data = Auto_train)
+
+# calculate test RMSE (root mean square error)
+augment(lm_fit, new_data = Auto_test) %>%
+  rmse(truth = mpg, estimate = .pred)
+```
+
+```{r}
+# specify model
+poly_rec <- recipe(mpg ~ horsepower, data = Auto_train) %>%
+  step_poly(horsepower, degree = 2)
+
+# create workflow object
+poly_wf <- workflow() %>%
+  add_recipe(poly_rec) %>%
+  add_model(lm_spec)
+
+# fit model
+poly_fit <- poly_wf %>% fit(Auto_train)
+
+# calculate test RMSE
+augment(poly_fit, new_data = Auto_test) %>%
+  rmse(truth = mpg, estimate = .pred)
+```
+
+```{r}
+# changing the seed results in a slightly different estimate
+set.seed(2)
+Auto_split <- initial_split(Auto)
+
+Auto_train <- training(Auto_split)
+Auto_test <- testing(Auto_split)
+
+poly_fit <- poly_wf %>% fit(Auto_train)
+
+augment(poly_fit, new_data = Auto_test) %>%
+  rmse(truth = mpg, estimate = .pred)
+```
+
+## 5.2 - Leave-One-Out Cross-Validation
+
+Not integrated into the broader tidymodels framework
+
+## 5.3 - k-Fold Cross-Validation
+
+```{r}
+# specify recipe where polynomial degree is tuned
+poly_tuned_rec <- recipe(mpg ~ horsepower, data = Auto_train) %>%
+  step_poly(horsepower, degree = tune())
+
+# create workflow object
+poly_tuned_wf <- workflow() %>%
+  add_recipe(poly_tuned_rec) %>%
+  add_model(lm_spec)
+
+# perform k-fold CV
+Auto_folds <- vfold_cv(Auto_train, v = 10)
+
+# specify all values of parameters to try out (k = 1, ..., 10)
+degree_grid <- grid_regular(degree(range = c(1, 10)),
+                            levels = 10)
+
+# fit the models within each fold for each value in given grid
+tune_res <- tune_grid(object = poly_tuned_wf,
+                      resamples = Auto_folds,
+                      grid = degree_grid)
+
+# plot results
+autoplot(tune_res)
+```
+
+```{r}
+# get numeric metrics used in the plots
+collect_metrics(tune_res)
+```
+
+```{r}
+# return the best performing models
+show_best(tune_res, metric = "rmse")
+```
+
+```{r}
+# select the optimal model
+best_degree <- select_by_one_std_err(tune_res, degree, metric = "rmse")
+```
+
+```{r}
+# use the best degree for the workflow object
+final_wf <- finalize_workflow(poly_wf, best_degree)
+
+# fit model
+final_fit <- final_wf %>% fit(Auto_train)
+
+final_fit
+```
+
+## 5.4 - The Bootstrap
+
+```{r}
+# generate bootstrap samples
+Portfolio_boots <- bootstraps(Portfolio, times = 1000)
+
+Portfolio_boots
+```
+
+```{r}
+# calculate statistic for a bootstrapped sample of Portfolio
+alpha.fn <- function(split) {
+  # convert an rsplit object to a dataframe
+  data <- analysis(split)
+  
+  # extract columns as variables
+  X <- data$X
+  Y <- data$Y
+  
+  # calculate statistic
+  (var(Y) - cov(X, Y)) / (var(X) + var(Y) - 2 * cov(X, Y))
+}
+```
+
+```{r}
+# apply alpha.fn() to each of the bootstraps
+alpha_res <- Portfolio_boots %>%
+  mutate(alpha = map_dbl(splits, alpha.fn))
+
+alpha_res
+```
+
+Different example
+
+```{r}
+# generate bootstrap samples
+Auto_boots <- bootstraps(Auto)
+
+# fit linear model for a bootstrapped sample of Portfolio
+boot.fn <- function(split) {
+  # fit linear model
+  lm_fit <- lm_spec %>%
+    fit(mpg ~ horsepower, data = analysis(split))
+  
+  # tidy up the results
+  tidy(lm_fit)
+}
+
+# apply boot.fn() to each of the bootstraps
+boot_res <- Auto_boots %>%
+  mutate(models = map(splits, boot.fn))
+
+# estimate the variability of the slope and intercept in the model
+boot_res %>%
+  unnest(cols = c(models)) %>%
+  group_by(term) %>%
+  summarise(mean = mean(estimate),
+            sd = sd(estimate))
+```
+
+## Credit
+
+[ISLR tidymodel labs - Chapter 5](https://emilhvitfeldt.github.io/ISLR-tidymodels-labs/05-resampling-methods.html)

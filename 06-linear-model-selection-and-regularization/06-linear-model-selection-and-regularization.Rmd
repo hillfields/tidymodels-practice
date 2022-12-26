@@ -1,0 +1,291 @@
+---
+title: "6 - Linear Model Selection and Regularization"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+```
+
+```{r, message=FALSE}
+# load libraries
+library(tidymodels)
+library(ISLR)
+
+# remove missing values from the response
+Hitters <- as_tibble(Hitters) %>%
+  filter(!is.na(Salary))
+```
+
+## 6.1 - Best Subset Selection
+
+Not implemented in tidymodels
+
+## 6.2 - Forward and Backward Stepwise Selection
+
+Not implemented in tidymodels
+
+## 6.3 - Ridge Regression {.tabset}
+
+```{r, message=FALSE}
+# specify model
+ridge_spec <- linear_reg(mixture = 0,     # 0 = ridge, 1 = lasso
+                         penalty = 0) %>% # amount of regularization
+  set_mode("regression") %>%
+  set_engine("glmnet")
+
+# fit model
+ridge_fit <- fit(ridge_spec,
+                 Salary ~ .,
+                 data = Hitters)
+```
+
+Estimates tend towards 0 when the amount of penalty goes up
+
+### penalty = $0$
+
+```{r}
+# penalty = 0
+tidy(ridge_fit)
+```
+
+### penalty = $50$
+
+```{r}
+# penalty = 50
+tidy(ridge_fit, penalty = 50)
+```
+
+### penalty = $705$
+
+```{r}
+# penalty = 705
+tidy(ridge_fit, penalty = 705)
+```
+
+### penalty = $11498$
+
+```{r}
+# penalty = 11498
+tidy(ridge_fit, penalty = 11498)
+```
+
+## {.unlisted .unnumbered}
+
+```{r}
+# plot coefficient estimates against penalties
+autoplot(ridge_fit)
+```
+
+```{r}
+# make predictions
+predict(ridge_fit, new_data = Hitters)
+```
+
+```{r}
+# make predictions with different penalty
+predict(ridge_fit, new_data = Hitters, penalty = 500)
+```
+
+```{r}
+# partition training and test data
+Hitters_split <- initial_split(Hitters, strata = "Salary")
+Hitters_train <- training(Hitters_split)
+Hitters_test <- testing(Hitters_split)
+
+# perform 10-fold CV
+Hitters_fold <- vfold_cv(Hitters_train, v = 10)
+
+# specify recipe
+ridge_recipe <- recipe(Salary ~ ., data = Hitters_train) %>%
+  step_novel(all_nominal_predictors()) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_zv(all_predictors()) %>%
+  step_normalize(all_predictors())
+
+# specify model
+ridge_spec <- linear_reg(penalty = tune(), mixture = 0) %>%
+  set_mode("regression") %>%
+  set_engine("glmnet")
+
+# create workflow object
+ridge_workflow <- workflow() %>%
+  add_recipe(ridge_recipe) %>%
+  add_model(ridge_spec)
+
+# penalty values to try
+penalty_grid <- grid_regular(penalty(range = c(-5, 5)),
+                             levels = 50)
+
+# fit model for each penalty
+tune_res <- tune_grid(object = ridge_workflow,
+                      resamples = Hitters_fold,
+                      grid = penalty_grid)
+
+# plot metrics
+autoplot(tune_res)
+```
+
+```{r}
+# get raw metrics
+collect_metrics(tune_res)
+```
+
+```{r}
+# select the best model based on the given metric
+best_penalty <- select_best(tune_res, metric = "rsq")
+best_penalty
+```
+
+```{r}
+# update the recipe by using the best penalty
+ridge_final <- finalize_workflow(ridge_workflow, best_penalty)
+
+# fit model with best penalty
+ridge_final_fit <- fit(ridge_final, data = Hitters_train)
+
+# output result on test data
+augment(ridge_final_fit, new_data = Hitters_test) %>%
+  rsq(truth = Salary, estimate = .pred)
+```
+
+## 6.4 - The Lasso
+
+```{r}
+# specify recipe
+lasso_recipe <- recipe(Salary ~ ., data = Hitters_train) %>%
+  step_novel(all_nominal_predictors()) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_zv(all_predictors()) %>%
+  step_normalize(all_predictors())
+
+# create workflow object
+lasso_spec <- linear_reg(penalty = tune(), mixture = 1) %>%
+  set_mode("regression") %>%
+  set_engine("glmnet")
+
+# specify workflow
+lasso_workflow <- workflow() %>%
+  add_recipe(lasso_recipe) %>%
+  add_model(lasso_spec)
+
+# penalty values to try
+penalty_grid <- grid_regular(penalty(range = c(-2, 2)),
+                             levels = 50)
+
+# fit model for each penalty
+tune_res <- tune_grid(object = lasso_workflow,
+                      resamples = Hitters_fold,
+                      grid = penalty_grid)
+
+# plot metrics
+autoplot(tune_res)
+```
+
+```{r}
+# select the best model based on the given metric
+best_penalty <- select_best(tune_res, metric = "rsq")
+
+# refit using the whole training data set
+lasso_final <- finalize_workflow(lasso_workflow, best_penalty)
+lasso_final_fit <- lasso_final %>% fit(Hitters_train)
+
+# output result on test data
+augment(lasso_final_fit, new_data = Hitters_test) %>%
+  rsq(truth = Salary, estimate = .pred)
+```
+
+## 6.5 - Principal Components Regression
+
+```{r}
+# specify model
+lm_spec <- linear_reg() %>%
+  set_mode("regression") %>%
+  set_engine("lm")
+
+# specify recipe
+pca_recipe <- recipe(Salary ~ ., data = Hitters_train) %>%
+  step_novel(all_nominal_predictors()) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_zv(all_predictors()) %>%
+  step_normalize(all_predictors()) %>%
+  step_pca(all_predictors(), threshold = tune())
+
+# create workflow object
+pca_workflow <- workflow() %>%
+  add_recipe(pca_recipe) %>%
+  add_model(lm_spec)
+
+# threshold values to try
+threshold_grid <- grid_regular(threshold(), levels = 10)
+
+# fit model for each threshold
+tune_res <- tune_grid(object = pca_workflow,
+                      resamples = Hitters_fold,
+                      grid = threshold_grid)
+
+# plot metrics
+autoplot(tune_res)
+```
+
+```{r}
+# select the best model based on the given metric
+best_threshold <- select_best(tune_res, metric = "rmse")
+
+# refit using the whole training data set
+pca_final <- finalize_workflow(pca_workflow, best_threshold)
+pca_final_fit <- fit(pca_final, data = Hitters_train)
+
+# output result on test data
+augment(pca_final_fit, new_data = Hitters_test) %>%
+  rsq(truth = Salary, estimate = .pred)
+```
+
+## 6.6 - Partial Least Squares
+
+```{r}
+# specify recipe
+pls_recipe <- recipe(Salary ~ ., data = Hitters_train) %>%
+  step_novel(all_nominal_predictors()) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_zv(all_predictors()) %>%
+  step_normalize(all_predictors()) %>%
+  step_pls(all_predictors(), num_comp = tune(), outcome = "Salary")
+
+# specify model
+lm_spec <- linear_reg() %>%
+  set_mode("regression") %>%
+  set_engine("lm")
+
+# create workflow object
+pls_workflow <- workflow() %>%
+  add_recipe(pls_recipe) %>%
+  add_model(lm_spec)
+
+# parameters to try
+num_comp_grid <- grid_regular(num_comp(c(1, 20)),
+                              levels = 10)
+
+# fit model for each parameter
+tune_res <- tune_grid(object = pls_workflow,
+                      resamples = Hitters_fold,
+                      grid = num_comp_grid)
+
+# select the best model based on the given metric
+best_threshold <- select_best(tune_res, metric = "rmse")
+
+# refit using the whole training data set
+pls_final <- finalize_workflow(pls_workflow, best_threshold)
+pls_final_fit <- pls_final %>% fit(Hitters_train)
+
+# output result on test data
+augment(pls_final_fit, new_data = Hitters_test) %>%
+  rsq(truth = Salary, estimate = .pred)
+```
+
+## Credit
+
+[ISLR tidymodel labs - Chapter 6](https://emilhvitfeldt.github.io/ISLR-tidymodels-labs/06-regularization.html)

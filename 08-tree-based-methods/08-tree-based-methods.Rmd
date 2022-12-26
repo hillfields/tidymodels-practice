@@ -1,0 +1,301 @@
+---
+title: "8 - Tree-Based Methods"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+```
+
+```{r, message=FALSE}
+# load libraries
+library(tidymodels)
+library(ISLR)
+library(rpart.plot)
+library(vip)
+
+# load data
+data("Boston", package = "MASS")
+Boston <- as_tibble(Boston)
+
+Carseats <- as_tibble(Carseats) %>%
+  mutate(High = factor(if_else(Sales <= 8, "No", "Yes"))) %>%
+  select(-Sales)
+```
+
+## 8.1 - Fitting Classification Trees {.tabset}
+
+```{r}
+# create general decision tree
+tree_spec <- decision_tree() %>%
+  set_engine("rpart")
+
+# specify classification tree model
+class_tree_spec <- tree_spec %>%
+  set_mode("classification")
+
+# fit model
+class_tree_fit <- class_tree_spec %>%
+  fit(High ~ ., data = Carseats)
+
+class_tree_fit
+```
+
+```{r, warning=FALSE}
+# visualize the decision tree
+# most important variable appears to be shelving location (first node)
+class_tree_fit %>%
+  extract_fit_engine() %>%
+  rpart.plot()
+```
+
+```{r}
+# get training accuracy
+augment(class_tree_fit, new_data = Carseats) %>%
+  accuracy(truth = High, estimate = .pred_class)
+```
+
+```{r}
+# create confusion matrix
+augment(class_tree_fit, new_data = Carseats) %>%
+  conf_mat(truth = High, estimate = .pred_class)
+```
+
+```{r}
+# partition training and test data
+set.seed(1234)
+Carseats_split <- initial_split(Carseats)
+
+Carseats_train <- training(Carseats_split)
+Carseats_test <- testing(Carseats_split)
+
+# fit model
+class_tree_fit <- class_tree_spec %>%
+  fit(High ~ ., data = Carseats_train)
+```
+
+### Training set
+
+```{r}
+# create confusion matrix for the training set
+augment(class_tree_fit, new_data = Carseats_train) %>%
+  conf_mat(truth = High, estimate = .pred_class)
+```
+
+```{r}
+# get training accuracy
+augment(class_tree_fit, new_data = Carseats_train) %>%
+  accuracy(truth = High, estimate = .pred_class)
+```
+
+### Test set
+
+```{r}
+# create confusion matrix for the test set
+augment(class_tree_fit, new_data = Carseats_test) %>%
+  conf_mat(truth = High, estimate = .pred_class)
+```
+
+```{r}
+# get test accuracy
+augment(class_tree_fit, new_data = Carseats_test) %>%
+  accuracy(truth = High, estimate = .pred_class)
+```
+
+## {.unlisted .unnumbered}
+
+```{r}
+# create workflow object with tuning parameter
+class_tree_wf <- workflow() %>%
+  add_model(class_tree_spec %>% set_args(cost_complexity = tune())) %>%
+  add_formula(High ~ .)
+
+# perform k-fold CV (default is k = 10)
+set.seed(1234)
+Carseats_fold <- vfold_cv(Carseats_train)
+
+# parameters to try
+param_grid <- grid_regular(cost_complexity(range = c(-3, -1)),
+                           levels = 10)
+
+# fit models
+tune_res <- tune_grid(object = class_tree_wf,
+                      resamples = Carseats_fold,
+                      grid = param_grid,
+                      metrics = metric_set(accuracy))
+
+# plot metrics
+autoplot(tune_res)
+```
+
+```{r, warning=FALSE}
+# choose the best parameter
+best_complexity <- select_best(tune_res)
+class_tree_final <- finalize_workflow(class_tree_wf, best_complexity)
+
+# fit model
+class_tree_final_fit <- fit(class_tree_final, data = Carseats_train)
+
+# visualize the decision tree
+class_tree_final_fit %>%
+  extract_fit_engine() %>%
+  rpart.plot()
+```
+
+## 8.2 - Fitting Regression Trees
+
+```{r}
+# partition training and test set
+set.seed(1234)
+Boston_split <- initial_split(Boston)
+
+Boston_train <- training(Boston_split)
+Boston_test <- testing(Boston_split)
+
+# specify model
+reg_tree_spec <- tree_spec %>%
+  set_mode("regression")
+
+# fit model
+reg_tree_fit <- reg_tree_spec %>%
+  fit(medv ~ ., data = Boston_train)
+
+reg_tree_fit
+```
+
+```{r}
+# calculate test RMSE
+augment(reg_tree_fit, new_data = Boston_test) %>%
+  rmse(truth = medv, estimate = .pred)
+```
+
+```{r, warning=FALSE}
+# visualize the decision tree
+reg_tree_fit %>%
+  extract_fit_engine() %>%
+  rpart.plot()
+```
+
+```{r}
+# create workflow object with tuning parameter
+reg_tree_wf <- workflow() %>%
+  add_model(reg_tree_spec %>% set_args(cost_complexity = tune())) %>%
+  add_formula(medv ~ .)
+
+# perform k-fold CV
+set.seed(1234)
+Boston_fold <- vfold_cv(Boston_train)
+
+# parameters to try
+param_grid <- grid_regular(cost_complexity(range = c(-4, -1)),
+                           levels = 10)
+
+# fit models
+tune_res <- tune_grid(object = reg_tree_wf,
+                      resamples = Boston_fold,
+                      grid = param_grid)
+
+# plot metrics
+autoplot(tune_res)
+```
+
+```{r}
+# choose the best parameter
+best_complexity <- select_best(tune_res, metric = "rmse")
+reg_tree_final <- finalize_workflow(reg_tree_wf, best_complexity)
+
+# fit model
+reg_tree_final_fit <- fit(reg_tree_final, data = Boston_train)
+reg_tree_final_fit
+```
+
+```{r, warning=FALSE}
+# visualize the decision tree
+reg_tree_final_fit %>%
+  extract_fit_engine() %>%
+  rpart.plot()
+```
+
+## 8.3 - Bagging and Random Forests
+
+Bagging
+
+```{r}
+# specify model
+bagging_spec <- rand_forest(mtry = .cols()) %>%
+  set_engine("randomForest", importance = TRUE) %>%
+  set_mode("regression")
+
+# fit model
+bagging_fit <- bagging_spec %>%
+  fit(medv ~ ., data = Boston_train)
+
+# get test RMSE
+augment(bagging_fit, new_data = Boston_test) %>%
+  rmse(truth = medv, estimate = .pred)
+
+# plot true vs. predicted values
+augment(bagging_fit, new_data = Boston_test) %>%
+  ggplot(aes(medv, .pred)) +
+  geom_abline() +
+  geom_point(alpha = 0.5)
+```
+
+```{r}
+# plot variable importance
+vip(bagging_fit)
+```
+
+Random forest
+
+```{r}
+# specify model
+# default # of parameters is p / 3 for regression and sqrt(p) for classification
+rf_spec <- rand_forest(mtry = 6) %>%
+  set_engine("randomForest", importance = TRUE) %>%
+  set_mode("regression")
+
+# fit model
+rf_fit <- rf_spec %>%
+  fit(medv ~ ., data = Boston_train)
+
+# get test RMSE
+augment(rf_fit, new_data = Boston_test) %>%
+  rmse(truth = medv, estimate = .pred)
+
+# plot true vs. predicted values
+augment(rf_fit, new_data = Boston_test) %>%
+  ggplot(aes(medv, .pred)) +
+  geom_abline() +
+  geom_point(alpha = 0.5)
+```
+
+## 8.4 - Boosting
+
+```{r}
+# specify model
+boost_spec <- boost_tree(trees = 5000, tree_depth = 4) %>%
+  set_engine("xgboost") %>%
+  set_mode("regression")
+
+# fit model
+boost_fit <- boost_spec %>%
+  fit(medv ~ ., data = Boston_train)
+
+# get test RMSE
+augment(boost_fit, new_data = Boston_test) %>%
+  rmse(truth = medv, estimate = .pred)
+
+# plot true vs. predicted values
+augment(boost_fit, new_data = Boston_test) %>%
+  ggplot(aes(medv, .pred)) +
+  geom_abline() +
+  geom_point(alpha = 0.5)
+```
+
+## Credit
+
+[ISLR tidymodel labs - Chapter 8](https://emilhvitfeldt.github.io/ISLR-tidymodels-labs/08-tree-based-methods.html)

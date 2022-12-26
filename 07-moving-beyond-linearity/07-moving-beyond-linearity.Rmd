@@ -1,0 +1,272 @@
+---
+title: "7 - Moving Beyond Linearity"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+```
+
+```{r, message=FALSE}
+# load libraries
+library(tidymodels)
+library(ISLR)
+
+# load data
+Wage <- as_tibble(Wage)
+```
+
+## 7.1 - Polynomial Regression and Step Functions {.tabset}
+
+```{r}
+# specify recipe
+rec_poly <- recipe(wage ~ age, data = Wage) %>%
+  step_poly(age, degree = 4)
+
+# specify model
+lm_spec <- linear_reg() %>%
+  set_mode("regression") %>%
+  set_engine("lm")
+
+# create workflow object
+poly_wf <- workflow() %>%
+  add_model(lm_spec) %>%
+  add_recipe(rec_poly)
+
+# fit model
+poly_fit <- poly_wf %>% fit(Wage)
+
+# get coefficients
+tidy(poly_fit)
+```
+
+**Note**: `step_poly()` returns variables that are a basis of orthogonal polynomials, which means that each of the columns is a linear combination of the variables `age`, `age^2`, `age^3`, and `age^4`.
+
+### Orthogonal polynomials
+
+```{r}
+# orthogonal polynomials (default)
+poly(1:6, degree = 4, raw = FALSE)
+```
+
+### Raw polynomials
+
+```{r}
+# raw polynomials
+poly(1:6, degree = 4, raw = TRUE)
+```
+
+## {.unlisted .unnumbered .tabset}
+
+It is still recommended to stick with the default of `raw = FALSE` unless you have a reason not to do that. One of the benefits of using `raw = FALSE` is that the resulting variables are uncorrelated which is a desirable quality when using a linear regression model.
+
+```{r}
+# specify recipe (using raw polynomials)
+rec_raw_poly <- recipe(wage ~ age, data = Wage) %>%
+  step_poly(age, degree = 4, options = list(raw = TRUE))
+
+# create workflow object
+raw_poly_wf <- workflow() %>%
+  add_model(lm_spec) %>%
+  add_recipe(rec_raw_poly)
+
+# fit model
+raw_poly_fit <- raw_poly_wf %>% fit(Wage)
+
+# output coefficients
+tidy(raw_poly_fit)
+```
+
+```{r}
+# get range of ages in the data set
+age_range <- tibble(age = seq(min(Wage$age), max(Wage$age)))
+
+# compute predictions and confidence bounds for the given ages
+regression_lines <- bind_cols(
+  augment(poly_fit, new_data = age_range),
+  predict(poly_fit, new_data = age_range, type = "conf_int")
+)
+
+regression_lines
+```
+
+```{r}
+# visualize the fitted line and confidence interval
+Wage %>%
+  ggplot(aes(age, wage)) +
+  geom_point(alpha = 0.2) +
+  geom_line(aes(y = .pred),
+            color = "darkgreen",
+            data = regression_lines) +
+  geom_line(aes(y = .pred_lower),
+            color = "blue",
+            linetype = "dashed",
+            data = regression_lines) +
+  geom_line(aes(y = .pred_upper),
+            color = "blue",
+            linetype = "dashed",
+            data = regression_lines)
+```
+
+```{r}
+# specify wider range of ages
+wide_age_range <- tibble(age = seq(18, 100))
+
+# compute predictions and confidence bounds for the given ages
+regression_lines <- bind_cols(
+  augment(poly_fit, new_data = wide_age_range),
+  predict(poly_fit, new_data = wide_age_range, type = "conf_int")
+)
+
+# visualize the fitted line and confidence interval
+Wage %>%
+  ggplot(aes(age, wage)) +
+  geom_point(alpha = 0.2) +
+  geom_line(aes(y = .pred),
+            color = "darkgreen",
+            data = regression_lines) +
+  geom_line(aes(y = .pred_lower),
+            color = "blue",
+            linetype = "dashed",
+            data = regression_lines) +
+  geom_line(aes(y = .pred_upper),
+            color = "blue",
+            linetype = "dashed",
+            data = regression_lines)
+```
+
+Classification example
+
+```{r}
+# change response to be a binary variable
+Wage <- Wage %>%
+  mutate(high = factor(wage > 250,
+                       levels = c(TRUE, FALSE),
+                       labels = c("High", "Low")))
+
+# specify recipe
+rec_poly <- recipe(high ~ age, data = Wage) %>%
+  step_poly(age, degree = 4)
+
+# specify model
+lr_spec <- logistic_reg() %>%
+  set_engine("glm") %>%
+  set_mode("classification")
+
+# create workflow object
+lr_poly_wf <- workflow() %>%
+  add_model(lr_spec) %>%
+  add_recipe(rec_poly)
+
+# fit model
+lr_poly_fit <- lr_poly_wf %>% fit(Wage)
+
+# compute predictions and confidence bounds for the given ages
+regression_lines <- bind_cols(
+  augment(lr_poly_fit, new_data = age_range, type = "prob"),
+  predict(lr_poly_fit, new_data = age_range, type = "conf_int")
+)
+
+# visualize the fitted line and confidence interval
+regression_lines %>%
+  ggplot(aes(age)) +
+  ylim(c(0, 0.2)) +
+  geom_line(aes(y = .pred_High), 
+            color = "darkgreen") +
+  geom_line(aes(y = .pred_lower_High),
+            color = "blue", 
+            linetype = "dashed") +
+  geom_line(aes(y = .pred_upper_High), 
+            color = "blue", 
+            linetype = "dashed") +
+  geom_jitter(aes(y = (high == "High") / 5),
+              data = Wage,
+              shape = "|",
+              height = 0,
+              width = 0.2)
+```
+
+Step function
+
+### `step_discretize()`
+
+Convert a numeric variable into a factor variable with `n` bins, with each bin having the same number of points
+
+```{r}
+# specify recipe
+rec_discretize <- recipe(high ~ age, data = Wage) %>%
+  step_discretize(age, num_breaks = 4)
+
+# create workflow object
+discretize_wf <- workflow() %>%
+  add_model(lr_spec) %>%
+  add_recipe(rec_discretize)
+
+# fit model
+discretize_fit <- discretize_wf %>% fit(Wage)
+discretize_fit
+```
+
+### `step_cut()`
+
+Manually supply the breaks
+
+```{r}
+# specify recipe
+rec_cut <- recipe(high ~ age, data = Wage) %>%
+  step_cut(age, breaks = c(30, 50, 70))
+
+# create workflow object
+cut_wf <- workflow() %>%
+  add_model(lr_spec) %>%
+  add_recipe(rec_cut)
+
+# fit model
+cut_fit <- cut_wf %>% fit(Wage)
+cut_fit
+```
+
+## 7.2 - Splines
+
+```{r}
+# specify recipe
+rec_spline <- recipe(wage ~ age, data = Wage) %>%
+  step_bs(age, options = list(knots = 25, 40, 60))
+
+# create workflow object
+spline_wf <- workflow() %>%
+  add_model(lm_spec) %>%
+  add_recipe(rec_spline)
+
+# fit model
+spline_fit <- fit(spline_wf, data = Wage)
+
+# compute predictions and confidence bounds for the given ages
+regression_lines <- bind_cols(
+  augment(spline_fit, new_data = age_range),
+  predict(spline_fit, new_data = age_range, type = "conf_int")
+)
+
+# visualize the fitted line and confidence interval
+Wage %>%
+  ggplot(aes(age, wage)) +
+  geom_point(alpha = 0.2) +
+  geom_line(aes(y = .pred),
+            color = "darkgreen",
+            data = regression_lines) +
+  geom_line(aes(y = .pred_lower),
+            color = "blue",
+            linetype = "dashed",
+            data = regression_lines) +
+  geom_line(aes(y = .pred_upper),
+            color = "blue",
+            linetype = "dashed",
+            data = regression_lines)
+```
+
+## Credit
+
+[ISLR tidymodel labs - Chapter 7](https://emilhvitfeldt.github.io/ISLR-tidymodels-labs/07-moving-beyond-linearity.html)

@@ -1,0 +1,450 @@
+---
+title: "12 - Unsupervised Learning"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+```
+
+## 12.1 - Principal Components Analysis
+
+```{r, message=FALSE}
+# load libraries
+library(tidymodels)
+library(tidyverse)
+library(magrittr)
+library(factoextra)
+library(patchwork)
+library(proxy)
+library(ISLR)
+
+# load data
+USArrests <- as_tibble(USArrests, rownames = "state")
+USArrests
+```
+
+```{r}
+# calculate the mean of each column
+USArrests %>%
+  select(-state) %>%
+  map_dfr(mean)
+```
+
+```{r}
+# perform PCA
+USArrests_pca <- USArrests %>%
+  select(-state) %>%
+  prcomp(scale = TRUE)
+
+USArrests_pca
+```
+
+```{r}
+# get PC scores (i.e. the new coordinates)
+tidy(USArrests_pca, matrix = "scores")
+```
+
+```{r}
+# get PC loadings (i.e. the coefficients)
+tidy(USArrests_pca, matrix = "loadings")
+```
+
+```{r}
+# plot loadings of each PC
+# see how much each variable contributes to each PC
+tidy(USArrests_pca, matrix = "loadings") %>%
+  ggplot(aes(value, column)) +
+  facet_wrap(~ PC) +
+  geom_col() +
+  scale_x_continuous(labels = scales::percent)
+```
+
+```{r}
+# get standard deviation of each PC along w/ PVE and cumulative PVE
+tidy(USArrests_pca, matrix = "eigenvalues")
+```
+
+```{r}
+# plot PVE
+tidy(USArrests_pca, matrix = "eigenvalues") %>%
+  ggplot(aes(PC, percent)) +
+  geom_col()
+```
+
+```{r}
+# get fitted PC transformation
+augment(USArrests_pca)
+```
+
+```{r}
+# apply transformation to new data
+augment(USArrests_pca, newdata = USArrests[1:5, ])
+```
+
+```{r}
+# specify recipe
+pca_rec <- recipe(~ ., data = USArrests) %>%
+  step_normalize(all_numeric()) %>%
+  step_pca(all_numeric(), id = "pca") %>%
+  prep()
+
+# get fitted PC transformation
+pca_rec %>%
+  bake(new_data = NULL)
+```
+
+```{r}
+# get fitted PC transformation of specified data
+pca_rec %>%
+  bake(new_data = USArrests[40:45, ])
+```
+
+```{r}
+# get PC scores
+tidy(pca_rec,
+     id = "pca",
+     type = "coef")
+```
+
+```{r}
+# get PC eigenvalues
+tidy(pca_rec,
+     id = "pca",
+     type = "variance")
+```
+
+```{r}
+# keep specified number of PCs
+recipe(~ ., data = USArrests) %>%
+  step_normalize(all_numeric()) %>%
+  step_pca(all_numeric(), num_comp = 3) %>%
+  prep() %>%
+  bake(new_data = NULL)
+```
+
+```{r}
+# keep PCs that explain some % of the variance
+recipe(~ ., data = USArrests) %>%
+  step_normalize(all_numeric()) %>%
+  step_pca(all_numeric(), threshold = 0.7) %>%
+  prep() %>%
+  bake(new_data = NULL)
+```
+
+## 12.2 - Matrix Completion
+
+Not available yet
+
+## 12.3 - K-Means Clustering
+
+```{r}
+# generate data
+set.seed(2)
+x_df <- tibble(
+  V1 = rnorm(n = 50, mean = rep(c(0, 3), each = 25)),
+  V2 = rnorm(n = 50, mean = rep(c(0, -4), each = 25))
+)
+
+# plot data
+x_df %>%
+  ggplot(aes(V1, V2, color = rep(c("A", "B"), each = 25))) +
+  geom_point() +
+  labs(color = "groups")
+```
+
+```{r}
+# run k-means algorithm
+set.seed(1234)
+res_kmeans <- kmeans(x_df, 
+                     centers = 3, # number of clusters
+                     nstart = 20) # multiple initial starting positions to find global maxima
+res_kmeans
+```
+
+```{r}
+# output info on clusters (centroids, # of observations, within-cluster sum-of-squares)
+tidy(res_kmeans)
+```
+
+```{r}
+# output model metrics
+glance(res_kmeans)
+```
+
+```{r}
+# see what cluster each observation belongs to
+augment(res_kmeans, data = x_df)
+```
+
+```{r}
+# visualize clusters
+augment(res_kmeans, data = x_df) %>%
+  ggplot(aes(V1, V2, color = .cluster)) +
+  geom_point()
+```
+
+The code below uses anonymous functions -- more info can be found [here](https://coolbutuseless.github.io/2019/03/13/anonymous-functions-in-r-part-1/).
+
+```{r}
+# try out different numbers of clusters
+set.seed(1234)
+multi_kmeans <- tibble(k = 1:10) %>%
+  mutate(model = purrr::map(k, ~ kmeans(x_df, centers = .x, nstart = 20)),
+         tot.withinss = purrr::map_dbl(model, ~ glance(.x)$tot.withinss))
+
+multi_kmeans
+```
+
+```{r}
+# output plot for elbow method (elbow at k = 2)
+multi_kmeans %>%
+  ggplot(aes(k, tot.withinss)) +
+  geom_point() +
+  geom_line() +
+  scale_x_continuous(breaks = seq(1, 10))
+```
+
+```{r}
+# get best model
+final_kmeans <- multi_kmeans %>%
+  filter(k == 2) %>%
+  pull(model) %>%
+  pluck(1)
+
+# visualize clusters
+augment(final_kmeans, data = x_df) %>%
+  ggplot(aes(V1, V2, color = .cluster)) +
+  geom_point()
+```
+
+## 12.4 - Hierarchical Clustering {.tabset}
+
+### Complete linkage
+
+```{r}
+# perform hierarchical clustering with complete linkage
+res_hclust_complete <- x_df %>%
+  dist() %>%
+  hclust(method = "complete")
+
+# output dendrogram
+res_hclust_complete %>%
+  fviz_dend(main = "complete", k = 2)
+```
+
+### Average linkage
+
+```{r}
+# perform hierarchical clustering with average linkage
+res_hclust_average <- x_df %>%
+  dist() %>%
+  hclust(method = "average")
+
+# output dendrogram
+res_hclust_average %>%
+  fviz_dend(main = "average", k = 2)
+```
+
+### Single linkage
+
+```{r}
+# perform hierarchical clustering with single linkage
+res_hclust_single <- x_df %>%
+  dist() %>%
+  hclust(method = "single")
+
+# output dendrogram
+res_hclust_single %>%
+  fviz_dend(main = "single", k = 2)
+```
+
+## {.unlisted .unnumbered}
+
+```{r}
+# scale data before performing hierarchical clustering
+x_df %>%
+  scale() %>%
+  dist() %>%
+  hclust(method = "complete") %>%
+  fviz_dend(k = 2)
+```
+
+## 12.5 - PCA on the NCI60 Data
+
+```{r}
+# load data
+data(NCI60, package = "ISLR")
+
+# clean data
+nci60 <- NCI60$data %>%
+  as_tibble() %>%
+  set_colnames(., paste0("V_", 1:ncol(.))) %>%
+  mutate(label = factor(NCI60$labs)) %>%
+  relocate(label)
+
+# perform PCA
+nci60_pca <- nci60 %>%
+  select(-label) %>%
+  prcomp(scale = TRUE)
+
+# add labels to PCs
+nci60_pcs <- bind_cols(
+  augment(nci60_pca),
+  nci60 %>% select(label)
+)
+
+# choose different colors for each label
+colors <- palette.colors(n = 14, palette = "Polychrome 36") %>%
+  unname()
+
+# plot labels on 1st & 2nd PCs
+nci60_pcs %>%
+  ggplot(aes(.fittedPC1, .fittedPC2, color = label)) +
+  geom_point() +
+  scale_color_manual(values = colors)
+```
+
+```{r}
+# plot labels on 1st & 3rd PCs
+nci60_pcs %>%
+  ggplot(aes(.fittedPC1, .fittedPC3, color = label)) +
+  geom_point() +
+  scale_color_manual(values = colors)
+```
+
+```{r}
+# plot PVE
+tidy(nci60_pca, matrix = "eigenvalues") %>%
+  ggplot(aes(PC, percent)) +
+  geom_point() +
+  geom_line() +
+  scale_x_continuous(breaks = seq(0, 60, by = 5)) +
+  scale_y_continuous(labels = scales::percent)
+```
+
+```{r}
+# plot cumulative PVE
+tidy(nci60_pca, matrix = "eigenvalues") %>%
+  ggplot(aes(PC, cumulative)) +
+  geom_point() +
+  geom_line()
+```
+
+## 12.6 - Clustering on the NCI60 Data {.tabset}
+
+```{r}
+# specify recipe w/ scaling
+nci60_scaled <- recipe(~ ., data = nci60) %>%
+  step_rm(label) %>%
+  step_normalize(all_predictors()) %>%
+  prep() %>%
+  bake(new_data = NULL)
+```
+
+### Complete linkage
+
+```{r}
+# perform hierarchical clustering with complete linkage
+nci60_complete <- nci60_scaled %>%
+  dist() %>%
+  hclust(method = "complete")
+
+# output dendrogram
+nci60_complete %>%
+  fviz_dend(main = "complete")
+```
+
+### Average linkage
+
+```{r}
+# perform hierarchical clustering with average linkage
+nci60_average <- nci60_scaled %>%
+  dist() %>%
+  hclust(method = "average")
+
+# output dendrogram
+nci60_average %>%
+  fviz_dend(main = "average")
+```
+
+### Single linkage
+
+```{r}
+# perform hierarchical clustering with single linkage
+nci60_single <- nci60_scaled %>%
+  dist() %>%
+  hclust(method = "single")
+
+# output dendrogram
+nci60_single %>%
+  fviz_dend(main = "single")
+```
+
+## {.unlisted .unnumbered}
+
+`k = 4` using complete linkage
+
+```{r}
+# hierarchical clustering with 4 clusters using complete linkage
+nci60_complete %>%
+  fviz_dend(main = "complete", k = 4)
+```
+
+```{r}
+# ca;culate which label is the most common one in each cluster
+tibble(label = nci60$label,
+       cluster_id = cutree(nci60_complete, k = 4)) %>%
+  count(label, cluster_id) %>%
+  group_by(cluster_id) %>%
+  mutate(prop = n / sum(n)) %>%
+  slice_max(n = 1, order_by = prop) %>%
+  ungroup()
+```
+
+```{r}
+# run k-means clustering algorithm
+set.seed(2)
+res_kmeans_scaled <- kmeans(nci60_scaled,
+                            centers = 4,
+                            nstart = 50)
+
+# extract cluster info
+tidy(res_kmeans_scaled) %>%
+  select(cluster, size, withinss)
+```
+
+```{r}
+# get k-means and hierarchical clusters
+cluster_kmeans <- res_kmeans_scaled$cluster
+cluster_hclust <- cutree(nci60_complete, k = 4)
+
+# compare both methods
+tibble(kmeans = factor(cluster_kmeans),
+       hclust = factor(cluster_hclust)) %>%
+  conf_mat(kmeans, hclust) %>%
+  autoplot(type = "heatmap")
+```
+
+There is not a lot of agreement between labels which makes sense, since the labels themselves are arbitrarily added. What is important is that they tend to agree quite a lot (the confusion matrix is sparse).
+
+```{r}
+# perform PCA
+nci60_pca <- recipe(~ ., nci60_scaled) %>%
+  step_pca(all_predictors(), num_comp = 5) %>%
+  prep() %>%
+  bake(new_data = NULL)
+
+# use PCs for clustering
+nci60_pca %>%
+  dist() %>%
+  hclust() %>%
+  fviz_dend(main = "hclust on first 5 PCs", k = 4)
+```
+
+## Credit
+
+[ISLR tidymodel labs - Chapter 12](https://github.com/EmilHvitfeldt/ISLR-tidymodels-labs/blob/0af5d6aaeba1054f96c2a8d16ec48ff57bd79b7f/12-unsupervised-learning.qmd) (this is not the same as the current version since tidyclust has some issues)

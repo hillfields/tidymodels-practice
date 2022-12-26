@@ -1,0 +1,182 @@
+---
+title: "3 - Linear Regression"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+```
+
+## 3.1 - Libraries
+
+```{r, message=FALSE}
+# load libraries
+library(MASS) # for the Boston data set
+library(tidymodels)
+library(ISLR)
+```
+
+## 3.2 - Simple Linear Regression
+
+```{r}
+# specify model
+lm_spec <- linear_reg() %>%  # functional form of the model
+  set_mode("regression") %>% # model type (classification / regression)
+  set_engine("lm")           # package / system used to fit the model
+```
+
+```{r}
+# fit linear regression model
+lm_fit <- lm_spec %>%
+  fit(medv ~ lstat, data = Boston)
+
+lm_fit
+```
+
+```{r}
+# show summary
+lm_fit %>%
+  pluck("fit") %>%
+  summary()
+```
+
+```{r}
+# return parameter estimates
+tidy(lm_fit)
+```
+
+```{r}
+# extract model statistics
+glance(lm_fit)
+```
+
+```{r}
+# make predictions
+predict(lm_fit, new_data = Boston)
+```
+
+```{r}
+# return 95% confidence intervals for all predictions
+predict(lm_fit, new_data = Boston, type = "conf_int")
+```
+
+```{r}
+# compare actual vs. predicted values
+bind_cols(predict(lm_fit, new_data = Boston),
+          Boston) %>%
+  select(medv, .pred)
+```
+
+```{r}
+# augment() adds column(s) for predictions to the given data
+# shorter than previous code
+augment(lm_fit, new_dat = Boston) %>%
+  select(medv, .pred)
+```
+
+## 3.3 - Multiple Linear Regression
+
+```{r}
+# fit multiple regression model w/ 2 predictors
+lm_fit2 <- lm_spec %>% 
+  fit(medv ~ lstat + age, data = Boston)
+
+lm_fit2
+```
+
+```{r}
+# return parameter estimates
+tidy(lm_fit2)
+```
+
+```{r}
+# make predictions
+predict(lm_fit2, new_data = Boston)
+```
+
+```{r}
+# fit multiple regression model w/ all predictors
+lm_fit3 <- lm_spec %>%
+  fit(medv ~ ., data = Boston)
+
+lm_fit3
+```
+
+## 3.4 - Interaction Terms
+
+```{r}
+# fit interaction model
+lm_fit4 <- lm_spec %>%
+  fit(medv ~ lstat * age, data = Boston)
+
+lm_fit4
+```
+
+```{r}
+# create recipe (i.e. the formula to use)
+rec_spec_interact <- recipe(medv ~ lstat + age, data = Boston) %>%
+  step_interact(~ lstat:age) # specify interaction term
+
+# create workflow object
+lm_wf_interact <- workflow() %>%
+  add_model(lm_spec) %>%
+  add_recipe(rec_spec_interact)
+
+# fit model
+lm_wf_interact %>% fit(Boston)
+```
+
+## 3.5 - Non-Linear Transformations of the Predictors
+
+```{r}
+# create recipe w/ power transformation
+rec_spec_pow2 <- recipe(medv ~ lstat, data = Boston) %>%
+  step_mutate(lstat = lstat ^ 2)
+
+# create workflow object
+lm_wf_pow2 <- workflow() %>%
+  add_model(lm_spec) %>%
+  add_recipe(rec_spec_pow2)
+
+# fit model
+lm_wf_pow2 %>% fit(Boston)
+```
+
+```{r}
+# create recipe w/ log transformation
+rec_spec_log <- recipe(medv ~ lstat, data = Boston) %>%
+  step_log(lstat)
+
+# create workflow object
+lm_wf_log <- workflow() %>%
+  add_model(lm_spec) %>%
+  add_recipe(rec_spec_log)
+
+# fit model
+lm_wf_log %>% fit(Boston)
+```
+
+## 3.6 - Qualitative Predictors
+
+```{r}
+# create recipe w/ qualitative predictors
+# all_nominal_predictors() extracts all character and factor predictors
+rec_spec <- recipe(Sales ~ ., data = Carseats) %>%
+  step_dummy(all_nominal_predictors()) %>% # convert qualitative predictors to dummy variables
+  step_interact(~ Income:Advertising + Price:Age)
+
+# create workflow object
+lm_wf <- workflow() %>%
+  add_model(lm_spec) %>%
+  add_recipe(rec_spec)
+
+# fit model
+lm_wf %>% fit(Carseats)
+```
+
+## Credit
+
+[ISLR tidymodel labs - Chapter 3](https://emilhvitfeldt.github.io/ISLR-tidymodels-labs/03-linear-regression.html)
