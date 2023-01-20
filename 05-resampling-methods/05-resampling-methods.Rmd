@@ -1,5 +1,5 @@
 ---
-title: "5- Resampling Methods"
+title: "5 - Resampling Methods"
 output: 
   html_document:
     toc: true
